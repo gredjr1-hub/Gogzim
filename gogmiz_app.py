@@ -1,7 +1,7 @@
 import streamlit as st
 import time
 # Import our new escape room generation function
-from llm_engine import generate_dynamic_escape_room, build_system_prompt, interact_with_entity, parse_llm_response
+from llm_engine import generate_dynamic_escape_room, build_system_prompt, interact_with_entity, parse_llm_response, generate_location_image
 
 st.set_page_config(page_title="AI Escape Room", page_icon="🔐", layout="wide")
 
