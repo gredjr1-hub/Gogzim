@@ -47,6 +47,9 @@ if not st.session_state.setup_complete:
                     # Call the new generation function
                     new_room = generate_dynamic_escape_room(theme, difficulty)
                     if new_room:
+                        st.toast("Drafting visual blueprints...", icon="🎨")
+                        room_image_url = generate_location_image(new_room['visual_description'])
+                        new_room['image_url'] = room_image_url # Save it to the dictionary
                         st.session_state.room_data = new_room
                         # Reset player state for the new run
                         st.session_state.player = {"inventory": [], "clues": []} 
@@ -64,6 +67,8 @@ else:
     # HEADER SECTION
     st.markdown(f"## {room['name']}")
     st.markdown(f"_{room['visual_description']}_")
+    if room.get("image_url"):
+        st.image(room["image_url"], use_container_width=True)
     st.divider()
 
     # Main Game Columns
@@ -155,6 +160,17 @@ else:
             
             # Header for the current interaction
             st.subheader(f"Talking to: {entity_data['name']}")
+
+            image_state_key = f"img_{active_id}"
+            if image_state_key not in st.session_state:
+                with st.spinner(f"Focusing on {entity_data['name']}..."):
+                    # Combine the room theme and object name for a better image prompt
+                    obj_prompt = f"A close up view of {entity_data['name']} inside {room['name']}."
+                    st.session_state[image_state_key] = generate_location_image(obj_prompt)
+            
+            if st.session_state[image_state_key]:
+                st.image(st.session_state[image_state_key], use_container_width=True)
+                
             with st.container(height=400, border=True):
                  # Display Chat History
                  for msg in st.session_state.chat_history:

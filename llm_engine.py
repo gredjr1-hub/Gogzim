@@ -3,11 +3,34 @@ import json
 import random
 from google import genai
 import streamlit as st
+from openai import OpenAI
 
-
+# Initialize the OpenAI client
+image_client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 # Initialize Gemini Client
 client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
+def generate_location_image(prompt_text):
+    """
+    Calls DALL-E 3 to generate a visual representation of the room or object.
+    We append art-style keywords to make it look like a video game.
+    """
+    style_suffix = " First-person perspective, atmospheric video game concept art, highly detailed, moody lighting."
+    full_prompt = f"{prompt_text} {style_suffix}"
+    
+    try:
+        response = image_client.images.generate(
+            model="dall-e-3",
+            prompt=full_prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1,
+        )
+        return response.data[0].url
+    except Exception as e:
+        print(f"Image generation failed: {e}")
+        return None
+        
 def generate_dynamic_escape_room(theme, difficulty):
     """
     Acts as the Lead Level Designer. It decides the master code, determines
