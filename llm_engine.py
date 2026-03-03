@@ -1,9 +1,8 @@
-import os
 import re
 import json
 import random
 from google import genai
-from dotenv import load_dotenv
+import streamlit as st
 
 
 # Initialize Gemini Client
