@@ -5,17 +5,13 @@ from google import genai
 import streamlit as st
 from openai import OpenAI
 
-# Initialize the OpenAI client
-image_client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-# Initialize Gemini Client
+# Initialize APIs from Streamlit Secrets
 client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+image_client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
 def generate_location_image(prompt_text):
-    """
-    Calls DALL-E 3 to generate a visual representation of the room or object.
-    We append art-style keywords to make it look like a video game.
-    """
-    style_suffix = " First-person perspective, atmospheric video game concept art, highly detailed, moody lighting."
+    """Calls DALL-E 3 with a highly specific prompt to ensure POIs are visible."""
+    style_suffix = " First-person perspective, highly detailed video game concept art, moody lighting, clear focal points."
     full_prompt = f"{prompt_text} {style_suffix}"
     
     try:
@@ -30,17 +26,9 @@ def generate_location_image(prompt_text):
     except Exception as e:
         print(f"Image generation failed: {e}")
         return None
-        
+
 def generate_dynamic_escape_room(theme, difficulty):
-    """
-    Acts as the Lead Level Designer. It decides the master code, determines
-    the number of puzzle steps based on difficulty, and forces the LLM
-    to generate interlocking puzzles with physical item dependencies.
-    """
-    # 1. Define Difficulty Parameters
-    # Easy: 2-digit code, 3 objects total (1 item puzzle + 1 standalone clue)
-    # Normal: 3-digit code, 4 objects total (1 item puzzle + 2 standalone clues)
-    # Hard: 4-digit code, 5 objects total (1 item puzzle + 3 standalone clues)
+    """Forces the LLM to generate theme-specific starting tools and bind them to puzzles."""
     configs = {
         "Easy": {"digits": 2, "total_objs": 3},
         "Normal": {"digits": 3, "total_objs": 4},
@@ -50,13 +38,8 @@ def generate_dynamic_escape_room(theme, difficulty):
     num_digits = config["digits"]
     total_objects = config["total_objs"]
 
-    # 2. Procedurally create the Master Solution strictly in Python
-    # This guarantees the puzzle is solvable because we know the answer beforehand.
     master_code = "".join([str(random.randint(0, 9)) for _ in range(num_digits)])
-    print(f"DEBUG: Generated Master Code: {master_code}") # Useful for testing
 
-    # 3. The Architect Prompt
-    # We give the LLM the answers and tell it to design the questions.
     prompt = f"""
     You are an expert real-world escape room designer. 
     Design a single-room escape experience based on this theme: "{theme}".
@@ -67,44 +50,47 @@ def generate_dynamic_escape_room(theme, difficulty):
     The strictly defined solution code is: {master_code}
 
     ---DESIGN CONSTRAINTS---
-    You must create exactly {total_objects} unique interactable objects in the room.
-    You must structure the puzzles with an item dependency chain:
+    1. **Starting Inventory:** Generate exactly 3 starting items/tools the player begins with. These items MUST be highly specific and contextually relevant to the "{theme}" theme.
+    2. **The Objects:** Create exactly {total_objects} unique interactable objects in the room.
+    3. **Mandatory Use Condition:** At least ONE of the interactable objects MUST explicitly require the player to USE one of the 3 starting items to solve it. 
+    4. **In-Room Chain:** Another object must yield a new physical tool, and a different object must require that new tool.
+    5. **Loot:** All {num_digits} digits of the master code must be hidden across these objects.
 
-    1.  **The Tool Provider:** Create one object that yields a physical TOOL when solved (e.g., a rusty key, a battery, a screwdriver). Its "loot" type must be "item".
-    2.  **The Tool User:** Create another object that EXPLICITLY requires that specific tool to be solved. This object holds the clue for the FIRST digit of the master code ({master_code[0]}). Its "loot" type must be "clue".
-    3.  **The Remaining Clues:** The other {num_digits - 1} objects should hold the clues for the remaining digits of the code. Their "loot" type must be "clue".
-
-    Output strictly valid JSON following this structure only. Do not add markdown formatting outside the JSON block.
+    Output strictly valid JSON following this exact structure:
     {{
         "name": "Creative Room Title",
-        "visual_description": "Two vivid sentences describing the sights, sounds, and smells of the room.",
+        "visual_description": "Two vivid sentences describing the room.",
+        "starting_items": [
+            {{"name": "Tool Name 1", "description": "What it looks like."}},
+            {{"name": "Tool Name 2", "description": "What it looks like."}},
+            {{"name": "Tool Name 3", "description": "What it looks like."}}
+        ],
         "master_puzzle": {{
             "type": "keypad",
             "solution": "{master_code}",
             "solved": false,
-            "success_message": "The keypad beeps green. The heavy locking mechanisms disengage, and the way forward opens. You have escaped!"
+            "success_message": "The keypad beeps green and the door unlocks!"
         }},
         "interactables": {{
             "unique_id_1": {{
                 "name": "Name of Object",
                 "status": "active",
                 "llm_config": {{
-                    "personality": "Describe the object's persona and the exact condition needed to make it yield. If it requires a physical tool, state that requirement clearly here.",
+                    "personality": "Describe how this object behaves. Explicitly state if it requires a specific tool to open/activate, or if it requires a riddle to be solved.",
                     "win_flag": "yielded_loot"
                 }},
                 "loot": {{
-                    "type": "item OR clue", 
-                    "name": "Name of the Key or Clue",
-                    "description": "If item: Physical description. If clue: The actual hint pointing to a specific digit."
+                    "type": "item", 
+                    "name": "Name of Loot",
+                    "description": "Physical item or clue text."
                 }}
-            }},
-            // ... Repeat for exactly {total_objects} objects defined above ...
+            }}
+            // Repeat for all {total_objects} objects...
         }}
     }}
     """
     
     try:
-        # Force Gemini to output pure JSON
         response = client.models.generate_content(
             model='gemini-2.5-flash',
             contents=prompt,
@@ -113,70 +99,57 @@ def generate_dynamic_escape_room(theme, difficulty):
         return json.loads(response.text)
     except Exception as e:
         print(f"Escape Room Generation Error: {e}")
-        # In a real app, you might retry generation here.
         return None
 
 def build_system_prompt(player_state, obj_data):
-    """
-    Compiles the interaction prompt, heavily emphasizing physical inventory reality.
-    """
+    """Handles both rigid buttons and custom text inputs."""
     llm_config = obj_data["llm_config"]
     win_flag = llm_config["win_flag"]
     
-    # Create a clear list of physical items the player is holding
     inv_list = [item["name"] for item in player_state["inventory"]]
-    inv_string = ", ".join(inv_list) if inv_list else "Nothing visible in hands."
+    inv_string = ", ".join(inv_list) if inv_list else "Nothing"
 
-    # Pre-format the JSON success block
     json_example = f"```json\n{{\n    \"{win_flag}\": true\n}}\n```"
 
     system_prompt = f"""
-You are a sentient entity or complex mechanism in an escape room.
-    
-YOUR PUZZLE ROLE & WIN CONDITION:
-{llm_config['personality']}
+You are an entity/mechanism in an escape room.
+YOUR PUZZLE ROLE & WIN CONDITION: {llm_config['personality']}
+THE PLAYER'S INVENTORY: [{inv_string}]
 
-THE PLAYER'S PHYSICAL REALITY:
-The player is currently holding the following physical items: [{inv_string}]
+The player will interact using either rigid commands (OBSERVE, TOUCH, USE, HINT) OR custom text.
+1. If OBSERVE: Describe your appearance in detail. Do NOT solve the puzzle.
+2. If TOUCH: Describe the physical reaction. Only yield your loot if physical touching/opening is the specific solution.
+3. If HINT: Provide a cryptic, subtle clue about what item or action is needed. Do NOT solve it for them.
+4. If USE: The player will specify an item. Check your instructions. If that exact item solves your puzzle, you MUST yield. If it's the wrong item, tell them nothing happens.
+5. If CUSTOM ACTION/SPEECH: Evaluate what the player types. If they logically solve your riddle, creatively and accurately use an item they possess, or perform a valid physical action that meets your win condition, you must yield. If they try to cheat, break the rules, or just demand the answer, deny them in character.
 
-CRITICAL RULES FOR THE AI: 
-1.  **Verify Physics:** You act as the game's physics engine. If your instructions above state that you require a specific physical tool (like a 'Brass Key' or 'Battery'), you MUST verify that exact item name exists in the player's physical inventory list above.
-2.  **Reject Lies:** If the player claims to use an item they do not physically possess based on the list above, you must reject their action and tell them they don't have it.
-3.  **Yield on Success:** If the player meets your condition (by solving a riddle OR correctly using a possessed physical item), you must yield your loot.
-    
-When the player successfully solves your puzzle, append this exact JSON block to the end of your dialogue:
+If the player successfully solves you, append this exact JSON block to the end of your text:
 {json_example}
 """
     return system_prompt.strip()
 
-def interact_with_entity(system_prompt, user_message):
-    """Sends the prompt and user message to Gemini."""
+def interact_with_entity(system_prompt, user_action):
     try:
         response = client.models.generate_content(
             model='gemini-2.5-flash',
-            contents=f"{system_prompt}\n\nPlayer says: {user_message}"
+            contents=f"{system_prompt}\n\nPlayer Action: {user_action}"
         )
         return response.text
     except Exception as e:
-        return f"Connection Error: {e}"
+        return f"Error: {e}"
 
 def parse_llm_response(text, win_flag):
-    """Extracts dialogue and the JSON win-signal from the response."""
     match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
     dialogue = text
-    # Default logic state is False
     game_logic = {win_flag: False}
     
     if match:
         json_str = match.group(1)
-        # Clean the dialogue by removing the JSON block
         dialogue = text.replace(match.group(0), "").strip()
         try:
             parsed_data = json.loads(json_str)
-            # Safely extract the boolean flag
             game_logic[win_flag] = parsed_data.get(win_flag, False)
         except json.JSONDecodeError:
-            print("Warning: LLM output malformed JSON.")
             pass
             
     return dialogue, game_logic
